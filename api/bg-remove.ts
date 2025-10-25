@@ -1,64 +1,42 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import fetch from "node-fetch";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // ✅ CORS headers
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
-  const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
-  if (!REPLICATE_API_TOKEN) {
-    return res.status(500).json({ error: "Missing Replicate API token." });
-  }
+  if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
   try {
-    // Read uploaded image
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of req) chunks.push(chunk as Uint8Array);
-    const buffer = Buffer.concat(chunks);
-    const base64 = buffer.toString("base64");
+    const apiKey = process.env.REMOVEBG_API_KEY;
+    if (!apiKey) throw new Error("Remove.bg API key missing.");
 
-    // Call Recraft AI background-removal model (highest quality)
-    const response = await fetch("https://api.replicate.com/v1/predictions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Token ${REPLICATE_API_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        version: "aa1e55aa41d8427e31ecbeea998f986e88e91b2d4b4a3136c81e32c5e8a0a234", // Recraft background-removal
-        input: {
-          image: `data:image/png;base64,${base64}`
-        }
-      })
+    const fileBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk) => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks)));
+      req.on("error", reject);
     });
 
-    const data = await response.json();
+    const formData = new FormData();
+    formData.append("image_file", new Blob([fileBuffer]));
+    formData.append("size", "auto");
+
+    const response = await fetch("https://api.remove.bg/v1.0/removebg", {
+      method: "POST",
+      headers: { "X-Api-Key": apiKey },
+      body: formData as any,
+    });
+
     if (!response.ok) {
-      return res.status(500).json({ error: data.error || "Replicate request failed" });
+      const text = await response.text();
+      throw new Error(`Remove.bg failed: ${text}`);
     }
 
-    // Poll until processing completes
-    let outputUrl: string | null = null;
-    while (!outputUrl) {
-      const check = await fetch(data.urls.get, {
-        headers: { "Authorization": `Token ${REPLICATE_API_TOKEN}` }
-      });
-      const result = await check.json();
-      if (result.status === "succeeded" && result.output && result.output[0]) {
-        outputUrl = result.output[0];
-        break;
-      }
-      if (result.status === "failed") throw new Error("AI processing failed");
-      await new Promise(r => setTimeout(r, 2000));
-    }
+    const arrayBuffer = await response.arrayBuffer();
+    const imageBuffer = Buffer.from(arrayBuffer);
+    const base64 = imageBuffer.toString("base64");
+    const dataUrl = `data:image/png;base64,${base64}`;
 
-    res.status(200).json({ ok: true, url: outputUrl });
+    res.status(200).json({ ok: true, url: dataUrl });
   } catch (err: any) {
-    console.error("Cloud background removal error:", err);
-    res.status(500).json({ error: err.message || "Background removal failed" });
+    res.status(500).json({ ok: false, error: err.message });
   }
 }
