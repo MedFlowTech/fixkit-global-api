@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "builds": [{ "src": "api/*.ts", "use": "@vercel/node" }],
+  "routes": [
+    { "src": "/api/merge-pdf", "dest": "/api/merge-pdf.ts" },
+    { "src": "/api/bg-remove", "dest": "/api/bg-remove.ts" },
+    { "src": "/api/ping", "dest": "/api/ping.ts" }
+  ]
+}
